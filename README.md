@@ -5,10 +5,6 @@
 ---
 
 <p align="center">
-  <img src="./docs/banner.png" alt="ReactivIQ Banner" width="100%" />
-</p>
-
-<p align="center">
   <img src="https://img.shields.io/badge/FastAPI-Backend-green" />
   <img src="https://img.shields.io/badge/React-Frontend-blue" />
   <img src="https://img.shields.io/badge/LangGraph-Workflow-purple" />
