@@ -1,0 +1,21 @@
+# Local dev overrides — hot reload, volume mounts, debug
+version: "3.9"
+
+services:
+  api:
+    volumes:
+      - ./backend:/app
+    environment:
+      DEBUG: "true"
+      APP_ENV: development
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+  worker:
+    volumes:
+      - ./backend:/app
+    environment:
+      DEBUG: "true"
+
+  beat:
+    volumes:
+      - ./backend:/app

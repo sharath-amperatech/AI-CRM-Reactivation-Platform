@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(\"C:\\\\Users\\\\sharath.kumar\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" -m uv run python -c \"from app.main import app; print\\('OK:', app.title\\)\")"
+    ]
+  }
+}

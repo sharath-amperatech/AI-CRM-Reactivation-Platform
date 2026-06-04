@@ -1,0 +1,171 @@
+version: "3.9"
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-reactiviq}:${POSTGRES_PASSWORD:-reactiviq}@postgres:5432/${POSTGRES_DB:-CRM_Reactivation}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  APP_ENV: ${APP_ENV:-development}
+  DEBUG: ${DEBUG:-false}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  COHERE_API_KEY: ${COHERE_API_KEY}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+  LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+  CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+  CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+  CLERK_JWKS_URL: ${CLERK_JWKS_URL}
+  RESEND_API_KEY: ${RESEND_API_KEY}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+  HUBSPOT_API_KEY: ${HUBSPOT_API_KEY}
+  SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-prod}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+  AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+  AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2025-01-01-preview}
+  AZURE_DEPLOYMENT_GPT41_MINI: ${AZURE_DEPLOYMENT_GPT41_MINI:-gpt-4.1-mini}
+  AZURE_DEPLOYMENT_GPT5_NANO: ${AZURE_DEPLOYMENT_GPT5_NANO:-gpt-5-nano}
+  AZURE_DEPLOYMENT_EMBEDDINGS: ${AZURE_DEPLOYMENT_EMBEDDINGS:-text-embedding-3-small}
+
+services:
+  # ── PostgreSQL 18 + PGVector ─────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: reactiviq-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-CRM_Reactivation}
+      POSTGRES_USER: ${POSTGRES_USER:-reactiviq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reactiviq}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-reactiviq} -d ${POSTGRES_DB:-CRM_Reactivation}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: reactiviq-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI backend ───────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: reactiviq-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Celery worker ─────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.worker
+    container_name: reactiviq-worker
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: >
+      celery -A app.tasks.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      -Q default,workflows,embeddings,notifications
+
+  # ── Celery Beat scheduler ─────────────────────────────────
+  beat:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.worker
+    container_name: reactiviq-beat
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.tasks.celery_app beat
+      --loglevel=info
+
+  # ── Flower (Celery monitor) ───────────────────────────────
+  flower:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.worker
+    container_name: reactiviq-flower
+    restart: unless-stopped
+    ports:
+      - "5555:5555"
+    environment:
+      <<: *backend-env
+      FLOWER_PORT: 5555
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.tasks.celery_app flower
+      --port=5555
+
+  # ── Langfuse (self-hosted observability, optional) ────────
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: reactiviq-langfuse
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-reactiviq}:${POSTGRES_PASSWORD:-reactiviq}@postgres:5432/${POSTGRES_DB:-CRM_Reactivation}
+      NEXTAUTH_URL: http://localhost:3100
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-langfuse-secret}
+      SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - observability
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  default:
+    name: reactiviq-net
