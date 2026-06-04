@@ -300,7 +300,7 @@ export default function Approvals() {
               </Card>
 
               {/* Langfuse Trace Link */}
-              {activeSelected.traceId && (
+              {/* {activeSelected.traceId && (
                 <div className="flex items-center gap-2 px-1">
                   <span className="text-[10px] text-muted-foreground">Trace ID:</span>
                   <a
@@ -313,7 +313,7 @@ export default function Approvals() {
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 </div>
-              )}
+              )} */}
 
               {/* CRM Context */}
               {activeSelected.crmContext && (
@@ -452,7 +452,7 @@ export default function Approvals() {
               )}
 
               {/* Retrieved Chunks */}
-              {activeSelected.retrievedChunks.length > 0 && (
+              {/* {activeSelected.retrievedChunks.length > 0 && (
                 <Card>
                   <button
                     className="w-full flex items-center justify-between px-4 py-3"
@@ -484,7 +484,7 @@ export default function Approvals() {
                     )}
                   </AnimatePresence>
                 </Card>
-              )}
+              )} */}
 
               {/* Generated Message */}
               <Card>

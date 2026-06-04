@@ -36,3 +36,38 @@ def scrub_metadata(meta: dict) -> dict:
             v = _PHONE_RE.sub("[redacted-phone]", v)
         result[k] = v
     return result
+
+
+def scrub_prompt(text: str, lead: dict) -> tuple[str, dict[str, str]]:
+    """Mask known lead PII values and regex-detected emails/phones in a prompt string.
+
+    Uses exact literal replacement on known lead fields (more precise than NLP),
+    then sweeps for any remaining email/phone patterns in activity content.
+    Returns (anonymized_text, mapping) where mapping is placeholder→original,
+    suitable for passing to restore_prompt() to de-anonymize LLM output.
+    """
+    mapping: dict[str, str] = {}
+
+    # Exact-match known PII fields; sort longest-first to avoid partial replacements
+    known = [
+        (lead.get("name") or "", "<PERSON>"),
+        (lead.get("email") or "", "<EMAIL>"),
+        (lead.get("phone") or "", "<PHONE>"),
+    ]
+    for original, placeholder in sorted(known, key=lambda x: len(x[0]), reverse=True):
+        if original and original in text:
+            mapping[placeholder] = original
+            text = text.replace(original, placeholder)
+
+    # Sweep for any remaining emails/phones in activity content
+    text = _EMAIL_RE.sub("[redacted-email]", text)
+    text = _PHONE_RE.sub("[redacted-phone]", text)
+
+    return text, mapping
+
+
+def restore_prompt(text: str, mapping: dict[str, str]) -> str:
+    """Restore placeholders in LLM output back to their original PII values."""
+    for placeholder, original in mapping.items():
+        text = text.replace(placeholder, original)
+    return text

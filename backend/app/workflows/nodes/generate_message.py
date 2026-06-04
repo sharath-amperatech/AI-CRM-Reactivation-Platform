@@ -10,6 +10,7 @@ from app.cache import SemanticCache
 from app.core.azure_openai import azure_client
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.pii_scrubber import restore_prompt, scrub_prompt
 from app.db.base import get_session_factory
 from app.models.message import MessageStatus
 from app.observability import get_current_trace_id, observe
@@ -91,13 +92,26 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
             reasoning=state.get("classification_reasoning", ""),
         )
 
-        # ── 3. Semantic cache check ────────────────────────────
+        # ── 3. Anonymize prompt + cache query before any LLM/embedding call ──
+        try:
+            anon_prompt, pii_mapping = scrub_prompt(prompt_text, lead)
+            anon_cache_query, _ = scrub_prompt(
+                f"{lead.get('name', '')} {lead.get('company', '')} "
+                f"{state.get('segment', '')} {context[:200]}",
+                lead,
+            )
+        except Exception as exc:
+            logger.warning("generate_message_pii_mask_failed", error=str(exc))
+            anon_prompt = prompt_text
+            pii_mapping = {}
+            anon_cache_query = (
+                f"{lead.get('name', '')} {lead.get('company', '')} "
+                f"{state.get('segment', '')} {context[:200]}"
+            )
+
+        # ── 4. Semantic cache check ────────────────────────────
         embed_svc = EmbeddingService(db)
-        cache_query = (
-            f"{lead.get('name', '')} {lead.get('company', '')} "
-            f"{state.get('segment', '')} {context[:200]}"
-        )
-        query_embedding = await embed_svc.embed_text(cache_query)
+        query_embedding = await embed_svc.embed_text(anon_cache_query)
         cached_body = await _cache.get(query_embedding)
 
         subject: str
@@ -143,7 +157,9 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
                 )
 
             try:
-                subject, body, ai_reasoning, grounding_warning = await _call_llm(prompt_text)
+                subject, body, ai_reasoning, grounding_warning = await _call_llm(anon_prompt)
+                subject = restore_prompt(subject, pii_mapping)
+                body = restore_prompt(body, pii_mapping)
             except Exception as exc:
                 logger.error("generate_message_failed", error=str(exc))
                 return {**state, "error": f"Message generation failed: {exc}"}

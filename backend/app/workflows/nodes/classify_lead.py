@@ -7,6 +7,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 from app.core.azure_openai import azure_client
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.pii_scrubber import scrub_prompt
 from app.observability import observe
 from app.workflows.state import ReactivationState
 
@@ -115,7 +116,13 @@ async def classify_lead(state: ReactivationState) -> ReactivationState:
         return parsed.segment, parsed.confidence, parsed.reasoning
 
     try:
-        segment, confidence, reasoning = await _call_llm(prompt)
+        anon_prompt, _ = scrub_prompt(prompt, lead)
+    except Exception as exc:
+        logger.warning("classify_lead_pii_mask_failed", error=str(exc))
+        anon_prompt = prompt
+
+    try:
+        segment, confidence, reasoning = await _call_llm(anon_prompt)
     except (ValidationError, json.JSONDecodeError) as exc:
         logger.warning("classify_lead_parse_error", error=str(exc))
         segment = lead.get("segment", "unknown")
