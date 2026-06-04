@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
+
+from pydantic import BaseModel, Field, model_validator
 
 from app.cache import SemanticCache
 from app.core.azure_openai import azure_client
@@ -11,9 +14,27 @@ from app.db.base import get_session_factory
 from app.models.message import MessageStatus
 from app.observability import get_current_trace_id, observe
 from app.prompt_registry import get_active_prompt
+from app.services.audit_service import AuditService
 from app.services.embedding_service import EmbeddingService
 from app.services.message_service import MessageService
 from app.workflows.state import ReactivationState
+
+_SUSPICIOUS_PATTERN = re.compile(
+    r"\$[\d,]+|\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b"
+)
+
+
+class GeneratedMessageOutput(BaseModel):
+    subject: str = Field(default="")
+    body: str = Field(default="")
+    reasoning: str = Field(default="")
+    grounding_warning: bool = False
+
+    @model_validator(mode="after")
+    def check_grounding(self) -> "GeneratedMessageOutput":
+        if _SUSPICIOUS_PATTERN.search(self.body):
+            self.grounding_warning = True
+        return self
 
 logger = get_logger(__name__)
 
@@ -82,6 +103,7 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
         subject: str
         body: str
         ai_reasoning: str
+        grounding_warning: bool = False
 
         if cached_body:
             logger.info("generate_message_cache_hit", lead_id=str(lead_id))
@@ -110,15 +132,18 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
                     input=prompt_text,
                     output=resp.choices[0].message.content,
                 )
-                parsed = json.loads(resp.choices[0].message.content)
+                parsed = GeneratedMessageOutput.model_validate(
+                    json.loads(resp.choices[0].message.content)
+                )
                 return (
-                    parsed.get("subject", f"Following up — {lead.get('company', '')}"),
-                    parsed.get("body", ""),
-                    parsed.get("reasoning", ""),
+                    parsed.subject or f"Following up — {lead.get('company', '')}",
+                    parsed.body,
+                    parsed.reasoning,
+                    parsed.grounding_warning,
                 )
 
             try:
-                subject, body, ai_reasoning = await _call_llm(prompt_text)
+                subject, body, ai_reasoning, grounding_warning = await _call_llm(prompt_text)
             except Exception as exc:
                 logger.error("generate_message_failed", error=str(exc))
                 return {**state, "error": f"Message generation failed: {exc}"}
@@ -142,6 +167,7 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
                 "ai_reasoning": ai_reasoning,
                 "prompt_version_id": str(loaded_prompt.version_id) if loaded_prompt.version_id else None,
                 "prompt_from_db": loaded_prompt.from_db,
+                "grounding_warning": grounding_warning,
             },
         )
 
@@ -150,6 +176,21 @@ async def generate_message(state: ReactivationState) -> ReactivationState:
         message.langfuse_trace_id = trace_id
         if reranker_scores:
             message.reranker_scores = reranker_scores
+        await db.commit()
+
+        await AuditService(db).log(
+            org_id=org_id,
+            action="message_generated",
+            resource_type="message",
+            resource_id=str(message.id),
+            changes={
+                "lead_id": str(lead_id),
+                "channel": state.get("campaign_channel", "email"),
+                "grounding_warning": grounding_warning,
+                "cache_hit": cached_body is not None,
+                "prompt_from_db": loaded_prompt.from_db,
+            },
+        )
         await db.commit()
 
     logger.info(

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.core.pii_scrubber import scrub_metadata
 from app.integrations.hubspot.client import HubSpotClient
 from app.models.crm_activity import ActivityType, CRMActivity
 from app.models.lead import Lead
@@ -158,7 +159,7 @@ class HubSpotSyncService:
                 content=content,
                 author=author,
                 hubspot_engagement_id=hubspot_engagement_id,
-                meta={},
+                meta=scrub_metadata(metadata),
             )
             self._db.add(activity)
 

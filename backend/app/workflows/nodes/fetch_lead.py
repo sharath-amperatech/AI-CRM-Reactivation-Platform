@@ -9,6 +9,7 @@ from app.db.base import get_session_factory
 from app.models.crm_activity import CRMActivity
 from app.models.lead import Lead
 from app.observability import observe
+from app.services.audit_service import AuditService
 from app.workflows.state import ReactivationState
 
 logger = get_logger(__name__)
@@ -62,6 +63,14 @@ async def fetch_lead(state: ReactivationState) -> ReactivationState:
             }
             for a in activities
         ]
+
+        await AuditService(db).log(
+            org_id=org_id,
+            action="lead_fetched",
+            resource_type="lead",
+            resource_id=str(lead_id),
+            changes={"activity_count": len(activities_list), "workflow": "reactivation"},
+        )
 
     logger.info(
         "workflow_fetch_lead_done",

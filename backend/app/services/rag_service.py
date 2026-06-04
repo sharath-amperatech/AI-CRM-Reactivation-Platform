@@ -23,6 +23,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.crm_activity import CRMActivity
 from app.reranker import rerank
+from app.services.audit_service import AuditService
 from app.services.embedding_service import EmbeddingService
 
 logger = get_logger(__name__)
@@ -155,6 +156,19 @@ class RAGService:
             hyde=meta.hyde_used,
             latencies=meta.stage_latencies_ms,
         )
+
+        await AuditService(self._db).log(
+            org_id=org_id,
+            action="rag_search",
+            resource_type="lead",
+            resource_id=str(lead_id),
+            changes={
+                "candidate_count": meta.candidate_count,
+                "hyde_used": meta.hyde_used,
+                "chunks_returned": len(final_chunks),
+            },
+        )
+
         return final_chunks, context_str, meta
 
     # ──────────────────────────────────────────────────────────────

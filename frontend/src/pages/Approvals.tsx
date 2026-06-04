@@ -43,6 +43,7 @@ export default function Approvals() {
   const [editMode, setEditMode] = useState(false)
   const [editedBody, setEditedBody] = useState('')
   const [contextExpanded, setContextExpanded] = useState(false)
+  const [expandedChunks, setExpandedChunks] = useState<Record<number, boolean>>({})
   const [reasoningExpanded, setReasoningExpanded] = useState(true)
   const [chunksExpanded, setChunksExpanded] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
@@ -338,15 +339,16 @@ export default function Approvals() {
                         <CardContent className="pt-0 pb-4 px-4">
                           <div className="space-y-2">
                             {(() => {
-                              const headerRe = /^\[(\d+)\]\s+\(([^—]+?)—\s*([^)]+)\)\s+\[(\w+)\]/
-                              const blocks = activeSelected.crmContext.split(/\n\n+/)
+                              const headerRe = /^\[(\d+)\]\s*\(([^—]+?)—\s*([^)]+)\)\s*(?:\[\w+\])?\s*([\s\S]*)/
+                              const formatDate = (d: string) => {
+                                try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
+                                catch { return d }
+                              }
+                              const blocks = activeSelected.crmContext.split(/(?=\[\d+\]\s*\()/).filter(Boolean)
                               const parsed = blocks.map(block => {
-                                const nl = block.indexOf('\n')
-                                const headerLine = nl === -1 ? block : block.slice(0, nl)
-                                const content = nl === -1 ? '' : block.slice(nl + 1).trim()
-                                const m = headerLine.match(headerRe)
+                                const m = block.trim().match(headerRe)
                                 if (!m) return { raw: block }
-                                return { index: m[1], type: m[2].trim(), date: m[3].trim(), label: m[4], content }
+                                return { index: m[1], type: m[2].trim(), date: formatDate(m[3].trim()), content: m[4].trim() }
                               })
                               const allParsed = parsed.every(e => !('raw' in e))
                               if (!allParsed) {
@@ -356,18 +358,59 @@ export default function Approvals() {
                                   </p>
                                 )
                               }
-                              return parsed.map((entry, i) => (
-                                <div key={i} className="rounded border border-border bg-muted/20 p-2">
-                                  <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                                    <span className="text-[10px] font-bold text-primary">[{(entry as any).index}]</span>
-                                    <span className="text-[10px] font-medium text-foreground capitalize">{(entry as any).type}</span>
-                                    <span className="text-[10px] text-muted-foreground">·</span>
-                                    <span className="text-[10px] text-muted-foreground">{(entry as any).date}</span>
-                                    <span className="text-[10px] bg-primary/10 text-primary rounded px-1">{(entry as any).label}</span>
-                                  </div>
-                                  <p className="text-[10px] text-muted-foreground leading-relaxed">{(entry as any).content}</p>
+                              return (
+                                <div className="relative ml-1">
+                                  {parsed.map((entry, i) => {
+                                    const e = entry as any
+                                    const isLast = i === parsed.length - 1
+                                    const isOpen = !!expandedChunks[i]
+                                    const typeColor =
+                                      e.type?.includes('email') ? 'bg-blue-400' :
+                                      e.type?.includes('meet') || e.type?.includes('call') ? 'bg-green-400' :
+                                      e.type?.includes('note') ? 'bg-yellow-400' : 'bg-primary'
+                                    const summary = e.content?.split(/(?<=[.!?])\s/)[0] ?? ''
+                                    return (
+                                      <div key={i} className="flex gap-3">
+                                        <div className="flex flex-col items-center w-4 shrink-0">
+                                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${typeColor}`} />
+                                          {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
+                                        </div>
+                                        <div className="pb-4 min-w-0 flex-1">
+                                          <button
+                                            className="w-full text-left"
+                                            onClick={() => setExpandedChunks(prev => ({ ...prev, [i]: !prev[i] }))}
+                                          >
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                              <span className="text-[10px] font-medium text-foreground capitalize">{e.type}</span>
+                                              <span className="text-[10px] text-muted-foreground">·</span>
+                                              <span className="text-[10px] text-muted-foreground">{e.date}</span>
+                                              <span className="text-[10px] font-bold text-primary ml-auto">[{e.index}]</span>
+                                              {isOpen
+                                                ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                                                : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
+                                            </div>
+                                            <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-1">{summary}</p>
+                                          </button>
+                                          <AnimatePresence>
+                                            {isOpen && (
+                                              <motion.div
+                                                initial={{ height: 0, opacity: 0 }}
+                                                animate={{ height: 'auto', opacity: 1 }}
+                                                exit={{ height: 0, opacity: 0 }}
+                                                className="overflow-hidden"
+                                              >
+                                                <div className="mt-1.5 rounded border border-border bg-muted/20 p-2">
+                                                  <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{e.content}</p>
+                                                </div>
+                                              </motion.div>
+                                            )}
+                                          </AnimatePresence>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
-                              ))
+                              )
                             })()}
                           </div>
                         </CardContent>
